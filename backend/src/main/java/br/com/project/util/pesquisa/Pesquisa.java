@@ -37,13 +37,12 @@ public class Pesquisa<T> {
 
     public PesquisaResult<T> pesquisar(PesquisaRequest request, Class<T> entityClass) {
         validarCampoExistente(entityClass, request.getFiltros(), request.getOrdenacao());
-        PesquisaResult<T> pesquisaResult = new PesquisaResult<>();
-
         ResultadoBusca<T> busca = buscarRegistros(request, entityClass);
-        pesquisaResult.setRegistros(busca.getRegistros());
-        pesquisaResult.setTotalRegistros(busca.getTotalRegistros());
 
-        return pesquisaResult;
+        return PesquisaResult.<T>builder()
+                .registros(busca.getRegistros())
+                .totalRegistros(busca.getTotalRegistros())
+                .build();
     }
 
     public ResultadoBusca<T> buscarRegistros(PesquisaRequest request, Class<T> entityClass) {
