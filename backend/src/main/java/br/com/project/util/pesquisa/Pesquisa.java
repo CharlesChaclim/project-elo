@@ -80,7 +80,7 @@ public class Pesquisa<T> {
         if (request.getFiltros() != null) {
             return request.getFiltros().stream()
                     .map(filtro -> criarPredicate(criteriaBuilder, root, filtro))
-                    .toList().toArray(new Predicate[]{});
+                    .toArray(Predicate[]::new);
         }
 
         return new Predicate[]{};
