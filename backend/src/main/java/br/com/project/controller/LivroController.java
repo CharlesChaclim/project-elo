@@ -84,11 +84,11 @@ public class LivroController {
     public PesquisaResult<LivroDTO> pesquisa(@RequestBody PesquisaRequest request) {
         PesquisaResult<Livro> pesquisaResult = Objects.requireNonNull(pesquisa).pesquisar(request, Livro.class);
 
-        PesquisaResult<LivroDTO> pesquisaResultResponse = new PesquisaResult<>();
-        pesquisaResultResponse.setRegistros(pesquisaResult.getRegistros().stream().map(LivroDTO::fromEntity).toList());
-        pesquisaResultResponse.setPagina(pesquisaResult.getPagina());
-        pesquisaResultResponse.setTotalRegistros(pesquisaResult.getTotalRegistros());
-        return pesquisaResultResponse;
+        return PesquisaResult.<LivroDTO>builder()
+                .pagina(pesquisaResult.getPagina())
+                .totalRegistros(pesquisaResult.getTotalRegistros())
+                .registros(pesquisaResult.getRegistros().stream().map(LivroDTO::fromEntity).toList())
+                .build();
     }
 
     @GetMapping("verifica-exclusao")

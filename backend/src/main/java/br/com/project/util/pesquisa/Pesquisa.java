@@ -11,11 +11,10 @@ import java.lang.reflect.ParameterizedType;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.time.temporal.Temporal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
-import java.util.regex.Pattern;
 
 
 @Component
@@ -27,16 +26,17 @@ public class Pesquisa<T> {
         this.entityManager = entityManager;
     }
 
-    public PesquisaResult<T> pesquisar(PesquisaRequest request, Class<T> entityClass) {
-        return pesquisar(request, entityClass, null);
+    public static String alterarCampoParaNomeAtributo(Class<?> clazz, String nomeCampo) {
+        return Arrays.stream(clazz.getDeclaredFields())
+                .filter(field -> field.isAnnotationPresent(JsonProperty.class))
+                .filter(field -> field.getAnnotation(JsonProperty.class).value().equals(nomeCampo))
+                .map(Field::getName)
+                .findFirst()
+                .orElse(nomeCampo);
     }
 
-    public PesquisaResult<T> pesquisar(PesquisaRequest request, Class<T> entityClass, Class<Object> dtoClass) {
-        if (dtoClass != null) {
-            validarCampoExistente(dtoClass, request.getFiltros(), request.getOrdenacao());
-        } else {
-            validarCampoExistente(entityClass, request.getFiltros(), request.getOrdenacao());
-        }
+    public PesquisaResult<T> pesquisar(PesquisaRequest request, Class<T> entityClass) {
+        validarCampoExistente(entityClass, request.getFiltros(), request.getOrdenacao());
         PesquisaResult<T> pesquisaResult = new PesquisaResult<>();
 
         ResultadoBusca<T> busca = buscarRegistros(request, entityClass);
@@ -52,10 +52,11 @@ public class Pesquisa<T> {
         CriteriaQuery<T> criteriaQuery = criteriaBuilder.createQuery(entityClass);
         Root<T> root = criteriaQuery.from(entityClass);
 
-        List<Predicate> predicates = criarPredicados(criteriaBuilder, root, request);
-        criteriaQuery.where(predicates.toArray(new Predicate[0]));
+        Predicate[] predicates = criarPredicados(criteriaBuilder, root, request);
+        criteriaQuery.where(predicates);
 
-        adicionarOrdenacao(criteriaBuilder, criteriaQuery, root, request);
+        List<Order> orders = adicionarOrdenacao(criteriaBuilder, root, request);
+        criteriaQuery.orderBy(orders);
 
         TypedQuery<T> query = entityManager.createQuery(criteriaQuery);
 
@@ -66,39 +67,39 @@ public class Pesquisa<T> {
         CriteriaQuery<Long> countQuery = criteriaBuilder.createQuery(Long.class);
         Root<T> countRoot = countQuery.from(entityClass);
 
-        List<Predicate> countPredicates = criarPredicados(criteriaBuilder, countRoot, request);
+        Predicate[] countPredicates = criarPredicados(criteriaBuilder, countRoot, request);
         countQuery.select(criteriaBuilder.count(countRoot));
-        countQuery.where(countPredicates.toArray(new Predicate[0]));
+        countQuery.where(countPredicates);
 
         Long totalRegistros = entityManager.createQuery(countQuery).getSingleResult();
 
         return new ResultadoBusca<>(resultados, totalRegistros);
     }
 
-    private List<Predicate> criarPredicados(CriteriaBuilder criteriaBuilder, Root<T> root, PesquisaRequest request) {
-        List<Predicate> predicates = new ArrayList<>();
+    private Predicate[] criarPredicados(CriteriaBuilder criteriaBuilder, Root<T> root, PesquisaRequest request) {
         if (request.getFiltros() != null) {
-            for (PesquisaFiltro filtro : request.getFiltros()) {
-                Predicate predicate = criarPredicate(criteriaBuilder, root, filtro.getCampo(), filtro.getValor(), filtro.getComparacao());
-                predicates.add(predicate);
-            }
+            return request.getFiltros().stream()
+                    .map(filtro -> criarPredicate(criteriaBuilder, root, filtro))
+                    .toList().toArray(new Predicate[]{});
         }
-        return predicates;
+
+        return new Predicate[]{};
     }
 
-    private void adicionarOrdenacao(CriteriaBuilder criteriaBuilder, CriteriaQuery<T> criteriaQuery, Root<T> root, PesquisaRequest request) {
+    private List<Order> adicionarOrdenacao(CriteriaBuilder criteriaBuilder, Root<T> root, PesquisaRequest request) {
         if (request.getOrdenacao() != null) {
-            List<Order> ordenacoes = new ArrayList<>();
-            for (PesquisaOrdenacao ordenacao : request.getOrdenacao()) {
-                Path<?> campo = getPath(root, ordenacao.getCampo(), JoinType.LEFT);
-                if (ordenacao.getOrdenacao() == Ordenacao.ASC) {
-                    ordenacoes.add(criteriaBuilder.asc(campo));
-                } else {
-                    ordenacoes.add(criteriaBuilder.desc(campo));
-                }
-            }
-            criteriaQuery.orderBy(ordenacoes);
+            return request.getOrdenacao().stream()
+                    .map(ordenacao -> {
+                        Path<?> campo = getPath(root, ordenacao.getCampo(), JoinType.LEFT);
+                        if (ordenacao.getOrdenacao() == Ordenacao.ASC) {
+                            return criteriaBuilder.asc(campo);
+                        }
+
+                        return criteriaBuilder.desc(campo);
+                    }).toList();
         }
+
+        return new ArrayList<>();
     }
 
     private Path<?> getPath(Path<?> root, String campo, JoinType joinType) {
@@ -110,60 +111,52 @@ public class Pesquisa<T> {
             } else if (path instanceof From) {
                 path = ((From<?, ?>) path).join(part, joinType);
             } else {
-                throw new IllegalArgumentException("Path must be an instance of From to perform join");
+                throw new IllegalArgumentException("O caminho deve ser uma instância de From para realizar o join.");
             }
         }
         return path;
     }
 
-    private Predicate criarPredicate(CriteriaBuilder criteriaBuilder, Root<?> root, String campo, Object valor, Comparacao comparacao) {
-        valor = converterParaLocalDateTimeCamposDeData(valor);
-        if (!(isNumeric(valor) || !(valor instanceof Temporal) || valor instanceof Enum)) {
-            throw new IllegalArgumentException("Comparação inválida para tipo de campo não numérico, temporal ou enum!");
-        }
+    private Predicate criarPredicate(CriteriaBuilder criteriaBuilder, Root<?> root, PesquisaFiltro filtro) {
+        Object valor = converterParaLocalDateTimeCamposDeData(filtro.getValor());
 
-        Path<?> path = getPath(root, campo, JoinType.INNER);
+        Path<?> path = getPath(root, filtro.getCampo(), JoinType.INNER);
 
-        if (path.getJavaType().isEnum() && valor instanceof String) {
-            valor = Enum.valueOf((Class<Enum>) path.getJavaType(), (String) valor);
-        }
-
-        switch (comparacao) {
-            case COMECA_COM:
-                return criteriaBuilder.like(criteriaBuilder.upper(path.as(String.class)), valor.toString().toUpperCase() + "%");
-            case CONTEM:
-                return criteriaBuilder.like(criteriaBuilder.upper(path.as(String.class)), "%" + valor.toString().toUpperCase() + "%");
-            case IGUAL:
-                if (valor instanceof Enum) {
-                    return criteriaBuilder.equal(path.as(Enum.class), valor);
-                } else if (valor == null) {
-                    return criteriaBuilder.isNull(path);
-                } else if (path.getJavaType().getTypeName().equals("java.time.LocalDate")) {
-                    return criteriaBuilder.like(criteriaBuilder.upper(path.as(String.class)), valor.toString().toUpperCase());
-                } else {
-                    return criteriaBuilder.equal(path, valor);
+        return switch (filtro.getComparacao()) {
+            case COMECA_COM ->
+                    criteriaBuilder.like(criteriaBuilder.upper(path.as(String.class)), valor.toString().toUpperCase() + "%");
+            case CONTEM ->
+                    criteriaBuilder.like(criteriaBuilder.upper(path.as(String.class)), "%" + valor.toString().toUpperCase() + "%");
+            case IGUAL -> {
+                if (valor == null) {
+                    yield criteriaBuilder.isNull(path);
                 }
-            default:
-                throw new IllegalArgumentException("Comparação não suportada: " + comparacao);
-        }
+
+                if (path.getJavaType().getTypeName().equals("java.time.LocalDate")) {
+                    yield criteriaBuilder.like(criteriaBuilder.upper(path.as(String.class)), valor.toString().toUpperCase());
+                }
+
+                yield criteriaBuilder.equal(path, valor);
+            }
+        };
     }
 
     private void validarCampoExistente(Class<?> entityClass, List<PesquisaFiltro> filtros, List<PesquisaOrdenacao> ordenacoes) {
         if (filtros != null) {
-            for (PesquisaFiltro filtro : filtros) {
+            filtros.forEach((filtro -> {
                 filtro.setCampo(alterarCampoParaNomeAtributo(entityClass, filtro.getCampo()));
                 validarCampoExistente(entityClass, filtro.getCampo());
-            }
+            }));
         }
 
         if (ordenacoes != null) {
-            for (PesquisaOrdenacao ordenacao : ordenacoes) {
+            ordenacoes.forEach(ordenacao -> {
                 ordenacao.setCampo(alterarCampoParaNomeAtributo(entityClass, ordenacao.getCampo()));
                 validarCampoExistente(entityClass, ordenacao.getCampo());
-            }
+            });
+
         }
     }
-
 
     private void validarCampoExistente(Class<?> entityClass, String campo) {
         try {
@@ -185,11 +178,6 @@ public class Pesquisa<T> {
         }
     }
 
-    public static boolean isNumeric(Object str) {
-        Pattern pattern = Pattern.compile("-?\\d+(\\.\\d+)?");
-        return str != null && pattern.matcher(str.toString()).matches();
-    }
-
     public Object converterParaLocalDateTimeCamposDeData(Object valor) {
         if (valor instanceof String valorStr) {
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm[:ss]");
@@ -200,18 +188,6 @@ public class Pesquisa<T> {
             }
         }
         return valor;
-    }
-
-    public static String alterarCampoParaNomeAtributo(Class<?> clazz, String nomeCampo) {
-        for (Field field : clazz.getDeclaredFields()) {
-            if (field.isAnnotationPresent(JsonProperty.class)) {
-                JsonProperty jsonProperty = field.getAnnotation(JsonProperty.class);
-                if (jsonProperty.value().equals(nomeCampo)) {
-                    return field.getName();
-                }
-            }
-        }
-        return nomeCampo;
     }
 
 }

@@ -79,11 +79,11 @@ public class UsuarioController {
     public PesquisaResult<UsuarioDTO> pesquisa(@RequestBody PesquisaRequest request) {
         PesquisaResult<Usuario> pesquisaResult = Objects.requireNonNull(pesquisa).pesquisar(request, Usuario.class);
 
-        PesquisaResult<UsuarioDTO> pesquisaResultResponse = new PesquisaResult<>();
-        pesquisaResultResponse.setRegistros(pesquisaResult.getRegistros().stream().map(UsuarioDTO::fromEntity).toList());
-        pesquisaResultResponse.setPagina(pesquisaResult.getPagina());
-        pesquisaResultResponse.setTotalRegistros(pesquisaResult.getTotalRegistros());
-        return pesquisaResultResponse;
+        return PesquisaResult.<UsuarioDTO>builder()
+                .pagina(pesquisaResult.getPagina())
+                .totalRegistros(pesquisaResult.getTotalRegistros())
+                .registros(pesquisaResult.getRegistros().stream().map(UsuarioDTO::fromEntity).toList())
+                .build();
     }
 
     @GetMapping("verifica-exclusao")
