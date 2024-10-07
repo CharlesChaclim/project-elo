@@ -36,7 +36,7 @@ public class EmprestimoController {
         return new ResponseEntity<>(createdEmprestimo, HttpStatus.CREATED);
     }
 
-    @PatchMapping
+    @PutMapping
     @Operation(summary = "Atualizador de data de devolução e status do emprestimo", responses = {
             @ApiResponse(responseCode = "200", description = "Emprestimo atualizado com sucesso"),
             @ApiResponse(responseCode = "400", description = "Emprestimo não encontrado", content = {@Content(schema = @Schema(implementation = StanderError.class))}),
